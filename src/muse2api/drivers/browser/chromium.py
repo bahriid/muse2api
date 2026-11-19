@@ -84,7 +84,8 @@ class ChromiumProcess:
             args.insert(1, f"--proxy-server={self.proxy}")
         if self.headless:
             args[1:1] = ["--headless=new", "--disable-gpu"]
-        if hasattr(os, "geteuid") and os.geteuid() == 0:
+        # Docker (non-root user, default seccomp) has no user namespaces for the sandbox.
+        if (hasattr(os, "geteuid") and os.geteuid() == 0) or os.environ.get("MUSE2API_NO_SANDBOX"):
             args.insert(1, "--no-sandbox")
 
         log.info("launching Chromium: %s", self.executable)
