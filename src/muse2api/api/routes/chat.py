@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import time
@@ -13,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from ...core.media import load_image_ref
 from ...core.models import resolve_model
 from ...core.prompt import flatten_messages, message_turns
-from ...core.tools import apply_tools, parse_reply
+from ...core.tools import NUDGE, apply_tools, needs_nudge, parse_reply
 from ...drivers.base import ChatRequest, InputImage
 from ...errors import InvalidRequest, Muse2APIError
 from ...services.container import Services
@@ -40,7 +41,8 @@ async def chat_completions(body: ChatCompletionRequest, request: Request,
     spec = resolve_model(body.model, "chat")
     request.state.model = body.model or spec.id
     tools = body.tools if body.tools and body.tool_choice != "none" else None
-    messages = apply_tools([m.model_dump() for m in body.messages], tools)
+    raw = [m.model_dump() for m in body.messages]
+    messages = apply_tools(raw, tools)
     flat = flatten_messages(messages)
     if not flat.text and not flat.images:
         raise InvalidRequest("messages contain no text or images")
@@ -66,8 +68,20 @@ async def chat_completions(body: ChatCompletionRequest, request: Request,
         # ponytail: tool replies are buffered (no token streaming), fine for short CALL lines
         text = "".join([d async for d in stream])
         content, calls = parse_reply(text, tools)
-        log.info("tools=%d prompt=%d chars calls=%d reply=%r", len(tools), len(flat.text),
-                 len(calls), text[:300])
+        nudged = False
+        if not calls and needs_nudge(raw, text):
+            # One retry: muse often narrates the next step instead of calling it.
+            more = apply_tools(raw + [{"role": "assistant", "content": text},
+                                      {"role": "user", "content": NUDGE}], tools)
+            retry = dataclasses.replace(req, prompt=flatten_messages(more).text,
+                                        turns=message_turns(more))
+            text2 = "".join([d async for d in svc.gateway.chat_stream(retry)])
+            _, calls = parse_reply(text2, tools)
+            nudged = True
+            log.debug("nudge reply=%r", text2[:300])
+        log.info("tools=%d prompt=%d chars calls=%s nudged=%s", len(tools), len(flat.text),
+                 [c["function"]["name"] for c in calls], nudged)
+        log.debug("reply=%r", text[:300])
         message = {"role": "assistant", "content": content}
         if calls:
             message["tool_calls"] = calls

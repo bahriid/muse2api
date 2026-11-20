@@ -14,6 +14,14 @@ import uuid
 from typing import Any
 
 _CALL = re.compile(r"CALL\s*(?=\{)")
+NUDGE = ("Your last reply had no CALL line, so the program will treat it as the FINAL answer "
+         "and stop. If the task still needs actions, reply now with only the CALL lines. If the "
+         "task is really complete, reply with exactly: DONE")
+
+
+def needs_nudge(messages: list[dict[str, Any]], text: str) -> bool:
+    """Short text right after a tool result is usually narration ("now I will read...")."""
+    return bool(messages) and messages[-1].get("role") == "tool" and len(text.strip()) < 400
 _DECODER = json.JSONDecoder()
 
 
@@ -107,10 +115,11 @@ def parse_reply(text: str, tools: list[dict[str, Any]]) -> tuple[str | None, lis
                 args = json.loads(args)
             except ValueError:
                 pass
-        calls.append({"id": "call_" + uuid.uuid4().hex[:24], "type": "function",
-                      "function": {"name": obj["name"],
-                                   "arguments": json.dumps(args, ensure_ascii=False)}})
         spans.append((m.start(), end))
+        fn = {"name": obj["name"], "arguments": json.dumps(args, ensure_ascii=False)}
+        if any(c["function"] == fn for c in calls):  # muse sometimes repeats a line
+            continue
+        calls.append({"id": "call_" + uuid.uuid4().hex[:24], "type": "function", "function": fn})
     if not calls:
         return text, []
     rest = text

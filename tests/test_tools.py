@@ -64,3 +64,27 @@ def test_chat_tool_calls(client, auth, monkeypatch):
     r = client.post("/v1/chat/completions", headers=auth,
                     json={"messages": msgs, "tools": TOOLS, "tool_choice": "none"})
     assert r.json()["choices"][0]["finish_reason"] == "stop"
+
+
+def test_dedupe_and_nudge(client, auth, monkeypatch):
+    from muse2api.drivers.mock import MockDriver
+
+    line = 'CALL {"name": "terminal", "arguments": {"command": "ls"}}'
+    assert len(parse_reply(line + "\n" + line, TOOLS)[1]) == 1
+
+    replies = iter(["Now I will list the files.", line])
+
+    async def reply(self, account, req):
+        yield next(replies)
+
+    monkeypatch.setattr(MockDriver, "chat_stream", reply)
+    msgs = [{"role": "user", "content": "list files"},
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "type": "function",
+             "function": {"name": "terminal", "arguments": '{"command": "pwd"}'}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "/home"}]
+    r = client.post("/v1/chat/completions", headers=auth, json={"messages": msgs, "tools": TOOLS})
+    assert r.json()["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] == '{"command": "ls"}'
+    # a real final answer survives the nudge (muse says DONE)
+    replies = iter(["The files are a and b.", "DONE"])
+    r = client.post("/v1/chat/completions", headers=auth, json={"messages": msgs, "tools": TOOLS})
+    assert r.json()["choices"][0]["message"]["content"] == "The files are a and b."
