@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from ...core.media import load_image_ref
 from ...core.models import resolve_model
 from ...core.prompt import flatten_messages, message_turns
-from ...core.tools import NUDGE, apply_tools, needs_nudge, parse_reply
+from ...core.tools import apply_tools, needs_nudge, nudge, parse_reply
 from ...drivers.base import ChatRequest, InputImage
 from ...errors import InvalidRequest, Muse2APIError
 from ...services.container import Services
@@ -73,7 +73,7 @@ async def chat_completions(body: ChatCompletionRequest, request: Request,
         last = text
         # Up to two retries: muse often narrates the next step instead of calling it.
         while not calls and nudged < 2 and needs_nudge(raw, last) and last.strip() != "DONE":
-            history += [{"role": "assistant", "content": last}, {"role": "user", "content": NUDGE}]
+            history += [{"role": "assistant", "content": last}, {"role": "user", "content": nudge(tools)}]
             more = apply_tools(history, tools)
             retry = dataclasses.replace(req, prompt=flatten_messages(more).text,
                                         turns=message_turns(more))

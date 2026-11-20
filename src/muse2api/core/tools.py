@@ -14,9 +14,15 @@ import uuid
 from typing import Any
 
 _CALL = re.compile(r"CALL\s*(?=\{)")
-NUDGE = ("Your last reply had no CALL line, so the program will treat it as the FINAL answer "
-         "and stop. If the task still needs actions, reply now with only the CALL lines. If the "
-         "task is really complete, reply with exactly: DONE")
+def nudge(tools: list[dict[str, Any]]) -> str:
+    """Retry prompt after a narration reply: name the real functions and give a CALL example."""
+    names = [(t.get("function") or t).get("name") for t in tools]
+    return ("Your last reply had no CALL line, so the program will treat it as the FINAL answer and "
+            "stop. Your own tools (muse.read, muse.*, sandbox, browser, files) are switched off in "
+            f"this chat; the only working functions are: {', '.join(names)}. If the task still needs "
+            "actions, reply now with only CALL lines, for example:\n"
+            f'CALL {{"name": "{names[0]}", "arguments": {{...}}}}\n'
+            "If the task is really complete, reply with exactly: DONE")
 
 
 def needs_nudge(messages: list[dict[str, Any]], text: str) -> bool:
@@ -42,8 +48,9 @@ def tool_prompt(tools: list[dict[str, Any]]) -> str:
     fns = "\n".join(_signature(t.get("function") or t) for t in tools)
     return (
         "You are the text-only reasoning core of an external agent program. You cannot act "
-        "yourself: do NOT use your own tools, sandbox, computer, code execution, browsing or "
-        "files, and never claim you ran something. The program performs actions for you.\n"
+        "yourself: your own tools (muse.read, muse.*, sandbox, computer, code execution, browsing, "
+        "files) are switched off in this chat, so never use them or claim you ran something. "
+        "The program performs actions for you, only through the Functions listed below.\n"
         "To request an action, reply with CALL lines only, one per line:\n"
         'CALL {"name": "<function>", "arguments": {...}}\n'
         "Several independent actions may go in one reply as several CALL lines. The program "
