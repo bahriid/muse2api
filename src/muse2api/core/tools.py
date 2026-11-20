@@ -82,7 +82,10 @@ def apply_tools(messages: list[dict[str, Any]],
         else:
             out.append(msg)
     if tools:
-        out.insert(0, {"role": "system", "content": tool_prompt(tools)})
+        # Last, so a long agent system prompt and big tool results don't bury it.
+        # ponytail: this breaks the follow-up prefix match, so every step resends the full
+        # prompt in a fresh thread; fine while muse.ai accepts the size.
+        out.append({"role": "system", "content": tool_prompt(tools)})
     return out
 
 

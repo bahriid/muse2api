@@ -66,6 +66,8 @@ async def chat_completions(body: ChatCompletionRequest, request: Request,
         # ponytail: tool replies are buffered (no token streaming), fine for short CALL lines
         text = "".join([d async for d in stream])
         content, calls = parse_reply(text, tools)
+        log.info("tools=%d prompt=%d chars calls=%d reply=%r", len(tools), len(flat.text),
+                 len(calls), text[:300])
         message = {"role": "assistant", "content": content}
         if calls:
             message["tool_calls"] = calls

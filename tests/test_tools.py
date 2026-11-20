@@ -32,15 +32,22 @@ def test_apply_tools_history_and_followup():
          "function": {"name": "terminal", "arguments": '{"command": "df -h"}'}}]},
         {"role": "tool", "tool_call_id": "c1", "content": "68% used"}]
     a, b = apply_tools(first, TOOLS), apply_tools(second, TOOLS)
-    assert a[0]["role"] == "system" and "terminal(command: string)" in a[0]["content"]
-    assert b[3] == {"role": "assistant", "content": 'CALL {"name": "terminal", "arguments": {"command": "df -h"}}'}
-    assert b[4] == {"role": "user", "content": "RESULT terminal\n68% used"}
-    # an open muse thread gets only the tool result as the next message
-    assert followup_text(message_turns(a), message_turns(b)) == "RESULT terminal\n68% used"
+    assert a[-1]["role"] == "system" and "terminal(command: string)" in a[-1]["content"]
+    assert b[2] == {"role": "assistant", "content": 'CALL {"name": "terminal", "arguments": {"command": "df -h"}}'}
+    assert b[3] == {"role": "user", "content": "RESULT terminal\n68% used"}
+    # without tools the tool result still continues an open muse thread
+    assert followup_text(message_turns(apply_tools(first, None)),
+                         message_turns(apply_tools(second, None))) == "RESULT terminal\n68% used"
     assert apply_tools(first, None) == first
 
 
-def test_chat_tool_calls(client, auth):
+def test_chat_tool_calls(client, auth, monkeypatch):
+    from muse2api.drivers.mock import MockDriver
+
+    async def reply(self, account, req):
+        yield 'CALL {"name": "terminal", "arguments": {"command": "df -h"}}'
+
+    monkeypatch.setattr(MockDriver, "chat_stream", reply)
     msgs = [{"role": "user", "content": 'CALL {"name": "terminal", "arguments": {"command": "df -h"}}'}]
     r = client.post("/v1/chat/completions", headers=auth, json={"messages": msgs, "tools": TOOLS})
     choice = r.json()["choices"][0]
