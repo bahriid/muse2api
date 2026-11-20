@@ -36,11 +36,14 @@ def tool_prompt(tools: list[dict[str, Any]]) -> str:
         "You are the text-only reasoning core of an external agent program. You cannot act "
         "yourself: do NOT use your own tools, sandbox, computer, code execution, browsing or "
         "files, and never claim you ran something. The program performs actions for you.\n"
-        "To request an action, your whole reply must be exactly one line:\n"
+        "To request an action, reply with CALL lines only, one per line:\n"
         'CALL {"name": "<function>", "arguments": {...}}\n'
-        "with nothing before or after it. The program replies with a RESULT message; then "
-        "either CALL again or give the final answer as normal text. If no action is needed, "
-        "answer normally.\n"
+        "Several independent actions may go in one reply as several CALL lines. The program "
+        "replies with RESULT messages; then CALL again or give the final answer.\n"
+        "A reply without any CALL line is treated as your FINAL answer and the task ends. So "
+        "never announce or describe the next step in words (no \"now I will read...\"): if "
+        "more actions are needed, send the CALL lines right away. Only write plain text when "
+        "the whole task is done or no action is needed.\n"
         f"Functions:\n{fns}"
     )
 
