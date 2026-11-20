@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from ...core.media import load_image_ref
 from ...core.models import resolve_model
 from ...core.prompt import flatten_messages, message_turns
+from ...core.tools import apply_tools, parse_reply
 from ...drivers.base import ChatRequest, InputImage
 from ...errors import InvalidRequest, Muse2APIError
 from ...services.container import Services
@@ -38,7 +39,9 @@ async def chat_completions(body: ChatCompletionRequest, request: Request,
     request.state.model = body.model  # logged even if it does not resolve
     spec = resolve_model(body.model, "chat")
     request.state.model = body.model or spec.id
-    flat = flatten_messages([m.model_dump() for m in body.messages])
+    tools = body.tools if body.tools and body.tool_choice != "none" else None
+    messages = apply_tools([m.model_dump() for m in body.messages], tools)
+    flat = flatten_messages(messages)
     if not flat.text and not flat.images:
         raise InvalidRequest("messages contain no text or images")
 
@@ -51,13 +54,45 @@ async def chat_completions(body: ChatCompletionRequest, request: Request,
         timeout=svc.settings.chat_timeout,
         first_token_timeout=svc.settings.first_token_timeout,
         conversation_hint=conversation_key(request, body.user),
-        turns=message_turns([m.model_dump() for m in body.messages]),
+        turns=message_turns(messages),
         cancel=cancel,
     )
     completion_id = "chatcmpl-" + uuid.uuid4().hex[:24]
     created = int(time.time())
     model_name = body.model or spec.id
     stream = svc.gateway.chat_stream(req)
+
+    if tools:
+        # ponytail: tool replies are buffered (no token streaming), fine for short CALL lines
+        text = "".join([d async for d in stream])
+        content, calls = parse_reply(text, tools)
+        message = {"role": "assistant", "content": content}
+        if calls:
+            message["tool_calls"] = calls
+        finish = "tool_calls" if calls else "stop"
+        usage = {"prompt_tokens": _approx_tokens(flat.text),
+                 "completion_tokens": _approx_tokens(text)}
+        usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+        if not body.stream:
+            return {"id": completion_id, "object": "chat.completion", "created": created,
+                    "model": model_name,
+                    "choices": [{"index": 0, "message": message, "finish_reason": finish}],
+                    "usage": usage}
+
+        def tool_events() -> list[bytes]:
+            delta = dict(message)
+            if calls:
+                delta["tool_calls"] = [{**c, "index": i} for i, c in enumerate(calls)]
+            base = {"id": completion_id, "object": "chat.completion.chunk",
+                    "created": created, "model": model_name}
+            out = [_sse({**base, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}),
+                   _sse({**base, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]})]
+            if (body.stream_options or {}).get("include_usage"):
+                out.append(_sse({**base, "choices": [], "usage": usage}))
+            return out + [_sse("[DONE]")]
+
+        return StreamingResponse(iter(tool_events()), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     if not body.stream:
         text = "".join([d async for d in stream])
