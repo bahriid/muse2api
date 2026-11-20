@@ -68,17 +68,19 @@ async def chat_completions(body: ChatCompletionRequest, request: Request,
         # ponytail: tool replies are buffered (no token streaming), fine for short CALL lines
         text = "".join([d async for d in stream])
         content, calls = parse_reply(text, tools)
-        nudged = False
-        if not calls and needs_nudge(raw, text):
-            # One retry: muse often narrates the next step instead of calling it.
-            more = apply_tools(raw + [{"role": "assistant", "content": text},
-                                      {"role": "user", "content": NUDGE}], tools)
+        nudged = 0
+        history = list(raw)
+        last = text
+        # Up to two retries: muse often narrates the next step instead of calling it.
+        while not calls and nudged < 2 and needs_nudge(raw, last) and last.strip() != "DONE":
+            history += [{"role": "assistant", "content": last}, {"role": "user", "content": NUDGE}]
+            more = apply_tools(history, tools)
             retry = dataclasses.replace(req, prompt=flatten_messages(more).text,
                                         turns=message_turns(more))
-            text2 = "".join([d async for d in svc.gateway.chat_stream(retry)])
-            _, calls = parse_reply(text2, tools)
-            nudged = True
-            log.debug("nudge reply=%r", text2[:300])
+            last = "".join([d async for d in svc.gateway.chat_stream(retry)])
+            _, calls = parse_reply(last, tools)
+            nudged += 1
+            log.debug("nudge %d reply=%r", nudged, last[:300])
         log.info("tools=%d prompt=%d chars calls=%s nudged=%s", len(tools), len(flat.text),
                  [c["function"]["name"] for c in calls], nudged)
         log.debug("reply=%r", text[:300])

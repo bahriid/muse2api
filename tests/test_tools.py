@@ -72,7 +72,7 @@ def test_dedupe_and_nudge(client, auth, monkeypatch):
     line = 'CALL {"name": "terminal", "arguments": {"command": "ls"}}'
     assert len(parse_reply(line + "\n" + line, TOOLS)[1]) == 1
 
-    replies = iter(["Now I will list the files.", line])
+    replies = iter(["Now I will list the files.", "Listing now.", line])  # second nudge works
 
     async def reply(self, account, req):
         yield next(replies)
